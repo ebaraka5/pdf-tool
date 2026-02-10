@@ -154,6 +154,8 @@ const state = {
   favorites: loadFavs(),
   compact: loadCompact(),
   lastToolDefaults: new Map(),
+  depsReady: false,
+  runLabel: 'Process',
 };
 
 function assignToolIcons(){
@@ -407,6 +409,20 @@ function updateFileList(){
 
 function updateRunEnabled(){
   const runBtn = el('run');
+  if(runBtn && !state.runLabel){
+    state.runLabel = runBtn.textContent || 'Process';
+  }
+  if(!state.depsReady){
+    if(runBtn){
+      runBtn.disabled = true;
+      runBtn.textContent = 'Loading…';
+    }
+    toast('Loading dependencies…');
+    return;
+  }
+  if(runBtn){
+    runBtn.textContent = state.runLabel || 'Process';
+  }
   if(!state.tool){ runBtn.disabled = true; return; }
   const msg = state.tool.validate ? state.tool.validate() : '';
   runBtn.disabled = !!msg;
@@ -539,6 +555,15 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(startTool){
       setTool(startTool);
     }
+
+    const checkDepsReady = ()=>{
+      state.depsReady = !!(window.PDFLib && window.pdfjsLib);
+      updateRunEnabled();
+      if(!state.depsReady){
+        setTimeout(checkDepsReady, 200);
+      }
+    };
+    checkDepsReady();
   }catch(e){
     showFatalError(e?.message||e);
   }
@@ -634,7 +659,7 @@ function simpleToolReorder(){
     id:'reorder', name:'Reorder Pages', category:'Core', accept:'pdf',
     desc:'Reorder pages by typing a new sequence (e.g., 3,1,2).',
     how:'Copies pages into a new document using your new order.',
-    mistakes:'You must include each page number exactly once.',
+    mistakes:'You must include each page number exactly once (1-based).',
     tips:'For large documents, start with small tests (e.g., 1-5).',
     buildOptions(root){
       root.innerHTML = `
