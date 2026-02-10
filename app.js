@@ -316,6 +316,7 @@ function assignToolIcons(){
     unlock: '🔓',
     flatten: '🧱',
     metadata: '🧬',
+    'metadata-scrub': '🧽',
     metaedit: '🪪',
     piiscan: '🛡️',
     audit: '🔎',
@@ -359,6 +360,7 @@ const tools = [
   simpleToolSign(),
   simpleToolRedact(),
   simpleToolPIIScan(),
+  simpleToolMetadataScrub(),
   simpleToolMetadata(),
   simpleToolAudit(),
   simpleToolCompress(),
@@ -547,7 +549,55 @@ function updateFileList(){
     list.textContent = 'No files selected.';
     return;
   }
-  list.innerHTML = state.files.map(f=>`• ${escapeHtml(f.name)} (${Math.round(f.size/1024)} KB)`).join('<br>');
+  list.innerHTML = '';
+  const host = document.createElement('div');
+  host.className = 'file-list';
+  let dragIndex = -1;
+
+  state.files.forEach((f, idx)=>{
+    const row = document.createElement('div');
+    row.className = 'file-item';
+    row.draggable = true;
+    row.dataset.index = String(idx);
+    row.innerHTML = `<span class="drag-handle" aria-hidden="true">↕</span><span class="file-name">${escapeHtml(f.name)}</span><span class="file-size">${Math.round(f.size/1024)} KB</span>`;
+
+    row.addEventListener('dragstart', ()=>{
+      dragIndex = idx;
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragend', ()=>{
+      dragIndex = -1;
+      row.classList.remove('dragging');
+      list.querySelectorAll('.file-item.over').forEach(node=>node.classList.remove('over'));
+    });
+    row.addEventListener('dragover', e=>{
+      e.preventDefault();
+      row.classList.add('over');
+    });
+    row.addEventListener('dragleave', ()=>row.classList.remove('over'));
+    row.addEventListener('drop', e=>{
+      e.preventDefault();
+      row.classList.remove('over');
+      const targetIndex = Number(row.dataset.index);
+      if(!Number.isInteger(dragIndex) || dragIndex < 0 || dragIndex === targetIndex) return;
+      const moved = state.files.splice(dragIndex, 1)[0];
+      state.files.splice(targetIndex, 0, moved);
+      updateFileList();
+      updateRunEnabled();
+      if(state.tool && typeof state.tool.loadThumbnails === 'function'){
+        state.tool.loadThumbnails().catch(err=>toast('Error: ' + (err?.message||err)));
+      }
+    });
+
+    host.appendChild(row);
+  });
+
+  list.appendChild(host);
+  const hint = document.createElement('div');
+  hint.className = 'mini';
+  hint.style.marginTop = '8px';
+  hint.textContent = 'Tip: Drag files to set merge sequence.';
+  list.appendChild(hint);
 }
 
 function updateRunEnabled(){
@@ -1642,7 +1692,7 @@ function simpleToolRedact(){
   return {
     id:'redact', name:'Redact', category:'Security', accept:'pdf',
     desc:'Applies black-box redactions to specified page regions.',
-    how:'Draws opaque rectangles over selected coordinates.',
+    how:'Draws permanent opaque black rectangles over selected coordinates.',
     mistakes:'Coordinates are in PDF points. If you need click-to-draw redaction, we can add that next.',
     tips:'Use Preview + trial-and-error to find approximate coordinates quickly.',
     buildOptions(root){
@@ -1690,8 +1740,8 @@ function simpleToolRedact(){
         if(r.p < 1 || r.p > doc.getPageCount()) continue;
         const page = doc.getPage(r.p - 1);
         page.drawRectangle({
-          x: r.x, y: r.y,
-          width: r.w, height: r.h,
+          x: Math.max(0, r.x), y: Math.max(0, r.y),
+          width: Math.abs(r.w), height: Math.abs(r.h),
           color: lib.rgb(0,0,0),
           opacity: 1
         });
@@ -1755,11 +1805,17 @@ function simpleToolPIIScan(){
       const pdf = await readPDFjs(file);
       const maxPages = Math.min(pdf.numPages, Math.max(1, parseInt(el('pii-pages').value||'3',10)||3));
       let text = '';
+      let hasTextLayer = false;
       for(let p=1;p<=maxPages;p++){
         const page = await pdf.getPage(p);
         const tc = await page.getTextContent();
+        if((tc.items||[]).length) hasTextLayer = true;
         text += tc.items.map(it=>it.str).join(' ') + '\n';
       }
+
+      const scanWarning = !hasTextLayer
+        ? 'Warning: This PDF appears to be a scanned image. PII scanning may not be accurate without OCR.'
+        : '';
 
       // Patterns
       const emailRe = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
@@ -1830,11 +1886,14 @@ function simpleToolPIIScan(){
 
       const fmt = String(el('pii-format').value||'text');
       if(fmt === 'json'){
-        toast(JSON.stringify(report, null, 2));
+        toast(JSON.stringify({ ...report, warning: scanWarning || undefined }, null, 2));
         return;
       }
 
       let out = `PII Scan Report (pages scanned: ${maxPages})\n\n`;
+      if(scanWarning){
+        out += `${scanWarning}\n\n`;
+      }
       out += `Emails (${emails.length}):\n` + (emails.join('\n')||'(none)') + '\n\n';
       out += `Phones (${phones.length}):\n` + (phones.join('\n')||'(none)') + '\n\n';
       out += `SSNs (${ssns.length}):\n` + (ssns.join('\n')||'(none)') + '\n\n';
@@ -1856,6 +1915,54 @@ function simpleToolPIIScan(){
     }
     return (sum % 10) === 0;
   }
+}
+
+// ---------- Tool: Metadata Scrubber ----------
+function simpleToolMetadataScrub(){
+  return {
+    id:'metadata-scrub', name:'Metadata Scrubber', category:'Security', accept:'pdf',
+    desc:'Removes hidden metadata (Author, Creator, Producer, etc.) from PDFs.',
+    how:'Clears common metadata fields while preserving visible page content.',
+    mistakes:'This does not perform OCR or alter page text; it only updates metadata fields.',
+    tips:'Run before sharing externally to reduce accidental information leaks.',
+    buildOptions(root){
+      root.innerHTML = `
+        <div class="hint good">This tool removes hidden document info (Author, Creator, Producer) while keeping the content intact.</div>
+        <p class="mini">Scrubbing helps prevent tracking and information leaks.</p>
+      `;
+    },
+    validate(){
+      const pdfs = state.files.filter(f=>f.type==='application/pdf');
+      if(!pdfs.length) return 'Upload at least 1 PDF.';
+      return '';
+    },
+    async run(){
+      const lib = getPDFLib();
+      const now = new Date();
+      const pdfs = state.files.filter(f=>f.type==='application/pdf');
+      const outputs = [];
+
+      for(const file of pdfs){
+        const bytes = await file.arrayBuffer();
+        const pdfDoc = await lib.PDFDocument.load(bytes);
+
+        pdfDoc.setTitle('');
+        pdfDoc.setAuthor('');
+        pdfDoc.setSubject('');
+        pdfDoc.setCreator('');
+        pdfDoc.setKeywords([]);
+        pdfDoc.setProducer('');
+        pdfDoc.setCreationDate(now);
+        pdfDoc.setModificationDate(now);
+
+        const pdfBytes = await pdfDoc.save();
+        outputs.push({ name: `scrubbed_${file.name}`, bytes: pdfBytes });
+      }
+
+      await downloadOutput(outputs);
+      toast(`Scrubbed metadata from ${pdfs.length} file(s).`);
+    }
+  };
 }
 
 // ---------- Tool: Metadata Editor ----------
