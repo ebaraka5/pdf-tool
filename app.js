@@ -14,6 +14,11 @@ function requireGlobal(name){
 function getPDFLib(){ return requireGlobal('PDFLib'); }
 function getPDFJS(){ return requireGlobal('pdfjsLib'); }
 
+function isPdfFile(file){
+  if(!file) return false;
+  return file.type === 'application/pdf' || /\.pdf$/i.test(String(file.name || ''));
+}
+
 let activePreviewRenderTask = null;
 let signDragBound = false;
 let signDragActive = false;
@@ -106,7 +111,7 @@ async function renderPreview(file, pageNum){
       activePreviewRenderTask = null;
     }
     if(!file) { clearPreviewCanvas(); note.textContent='Upload a PDF to preview.'; drawSignOverlay(); return; }
-    if(file.type !== 'application/pdf') { note.textContent='Preview supports PDFs only.'; return; }
+    if(!isPdfFile(file)) { note.textContent='Preview supports PDFs only.'; return; }
 
     const pdf = await readPDFjs(file);
     const pn = Math.min(Math.max(1, pageNum||1), pdf.numPages);
@@ -569,7 +574,7 @@ function setTool(id){
   }catch(_){}
 
   // update preview immediately for selected tool
-  const pdf = state.files.find(f=>f.type==='application/pdf');
+  const pdf = state.files.find(isPdfFile);
   const pn = parseInt(el('preview-page')?.value||'1',10) || 1;
   renderPreview(pdf || null, pn);
 }
@@ -669,7 +674,7 @@ function updateRunEnabled(){
     updateRunEnabled();
 
     // auto-preview first PDF
-    const pdf = state.files.find(f=>f.type==='application/pdf');
+    const pdf = state.files.find(isPdfFile);
     if(pdf){
       const pn = parseInt(el('preview-page')?.value||'1',10) || 1;
       renderPreview(pdf, pn);
@@ -723,7 +728,7 @@ function updateRunEnabled(){
   initSignatureDragging();
 
   function doPreview(){
-    const pdf = state.files.find(f=>f.type==='application/pdf');
+    const pdf = state.files.find(isPdfFile);
     const pn = parseInt(pageInp.value||'1',10) || 1;
     renderPreview(pdf || null, pn);
   }
