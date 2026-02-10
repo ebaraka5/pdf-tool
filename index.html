@@ -187,6 +187,48 @@
     body.compact .tool-left{ justify-content:center; }
 
     /* Main panels */
+    .page-hero{
+      display:flex;
+      align-items:center;
+      gap:16px;
+      padding:18px 24px;
+      border-radius:0 0 22px 22px;
+      background: linear-gradient(120deg, rgba(30,41,59,.95), rgba(15,23,42,.8));
+      border:1px solid var(--border);
+      margin:2px -18px 16px;
+      width: calc(100% + 36px);
+      box-shadow: 0 14px 30px rgba(15,23,42,.35);
+    }
+    .hero-logo{
+      width:64px;
+      height:64px;
+      border-radius:18px;
+      display:grid;
+      place-items:center;
+      background:
+        radial-gradient(circle at 30% 20%, rgba(96,165,250,.7), transparent 55%),
+        radial-gradient(circle at 70% 80%, rgba(167,139,250,.6), transparent 55%),
+        rgba(15,23,42,.9);
+      border:1px solid rgba(148,163,184,.35);
+    }
+    .hero-title{
+      margin:0;
+      font-size:24px;
+      letter-spacing:.01em;
+    }
+    .hero-subtitle{
+      margin:6px 0 0;
+      color:var(--muted);
+      font-size:14px;
+    }
+    .hero-note{
+      margin:8px 0 0;
+      display:flex;
+      align-items:center;
+      gap:6px;
+      font-size:13px;
+      color:rgba(248,250,252,.9);
+    }
     .topbar{
       display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
       padding:6px 4px 10px;
@@ -256,6 +298,23 @@
 
     <!-- MAIN -->
     <main id="main">
+      <header class="page-hero">
+        <div class="hero-logo" aria-hidden="true">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="6" y="5" width="20" height="26" rx="4" fill="rgba(96,165,250,.25)" stroke="rgba(148,163,184,.7)" stroke-width="1.5"/>
+            <path d="M22 5H18C15.7909 5 14 6.79086 14 9V13" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M10 18H22M10 22H22M10 26H18" stroke="rgba(96,165,250,.95)" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="27" cy="26" r="5" fill="rgba(167,139,250,.25)" stroke="rgba(167,139,250,.9)" stroke-width="1.5"/>
+            <path d="M27 24V28" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M25 26H29" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="hero-title">PDF Workspace</h1>
+          <div class="hero-subtitle">Privacy-First PDF Tools • No Uploads • Runs Locally</div>
+          <div class="hero-note">🔒 Files never leave your browser</div>
+        </div>
+      </header>
       <div class="topbar">
         <div>
           <h2 id="tool-title">Choose a tool</h2>
