@@ -15,6 +15,10 @@ function getPDFLib(){ return requireGlobal('PDFLib'); }
 function getPDFJS(){ return requireGlobal('pdfjsLib'); }
 
 let activePreviewRenderTask = null;
+let signDragBound = false;
+let signDragActive = false;
+let signDragOffsetX = 0;
+let signDragOffsetY = 0;
 
 function detectPdfjsVersionFromScripts(){
   const script = document.querySelector('script[src*="pdfjs-dist"][src*="/build/pdf.min.js"]');
@@ -171,6 +175,63 @@ function drawSignOverlay(){
   ctx.fillStyle = 'rgba(96,165,250,.15)';
   ctx.fillRect(m.xPx, m.yPx, m.wPx, m.hPx);
   ctx.restore();
+}
+
+function initSignatureDragging(){
+  if(signDragBound) return;
+  const overlay = el('overlay-canvas');
+  if(!overlay) return;
+
+  const updateFromPointer = (clientX, clientY)=>{
+    if(!signDragActive || !state.signOverlayActive) return;
+    const m = getSignOverlayMetrics();
+    if(!m || !state.preview) return;
+
+    const rect = overlay.getBoundingClientRect();
+    const localX = Math.max(0, Math.min(m.canvasW, clientX - rect.left));
+    const localY = Math.max(0, Math.min(m.canvasH, clientY - rect.top));
+    const xPx = Math.max(0, Math.min(m.canvasW - m.wPx, localX - signDragOffsetX));
+    const yPx = Math.max(0, Math.min(m.canvasH - m.hPx, localY - signDragOffsetY));
+
+    const xPt = Math.round(xPx * (state.preview.pdfWidth / m.canvasW));
+    const yTopPt = Math.round(yPx * (state.preview.pdfHeight / m.canvasH));
+
+    if(el('sg-x')) el('sg-x').value = String(xPt);
+    if(el('sg-y')) el('sg-y').value = String(yTopPt);
+    drawSignOverlay();
+  };
+
+  overlay.addEventListener('mousedown', e=>{
+    if(!state.signOverlayActive) return;
+    const m = getSignOverlayMetrics();
+    if(!m) return;
+    const rect = overlay.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const inside = px>=m.xPx && px<=m.xPx+m.wPx && py>=m.yPx && py<=m.yPx+m.hPx;
+    if(!inside) return;
+
+    signDragActive = true;
+    signDragOffsetX = px - m.xPx;
+    signDragOffsetY = py - m.yPx;
+    overlay.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', e=>{ updateFromPointer(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', ()=>{
+    if(!signDragActive) return;
+    signDragActive = false;
+    overlay.style.cursor = state.signOverlayActive ? 'crosshair' : 'default';
+  });
+
+  signDragBound = true;
+}
+
+function stopSignatureDragging(){
+  signDragActive = false;
+  const overlay = el('overlay-canvas');
+  if(overlay) overlay.style.cursor = state.signOverlayActive ? 'crosshair' : 'default';
 }
 
 async function downloadOutput(files){
@@ -424,6 +485,9 @@ function bindToolSearch(){
 }
 
 function setTool(id){
+  if(state.tool && state.tool.id !== id && typeof state.tool.cleanup === 'function'){
+    try{ state.tool.cleanup(); }catch(e){ console.warn('Tool cleanup failed:', e); }
+  }
   const tool = tools.find(t=>t.id===id);
   if(!tool) return;
   state.toolId = id;
@@ -459,6 +523,7 @@ function setTool(id){
   ui.appendChild(opts);
 
   state.signOverlayActive = (tool.id === 'sign');
+  stopSignatureDragging();
   const optRoot = opts.querySelector('#tool-options');
   tool.buildOptions?.(optRoot);
 
@@ -528,6 +593,9 @@ function updateRunEnabled(){
       const pn = parseInt(el('preview-page')?.value||'1',10) || 1;
       renderPreview(pdf, pn);
     }
+    if(state.tool && typeof state.tool.loadThumbnails === 'function'){
+      state.tool.loadThumbnails().catch(e=>toast('Error: ' + (e?.message||e)));
+    }
   }
 
   input.addEventListener('change', e=>{
@@ -544,6 +612,9 @@ function updateRunEnabled(){
     el('overlay-canvas')?.getContext('2d')?.clearRect(0,0,9999,9999);
     el('preview-note').textContent = 'Files cleared.';
     toast('Files cleared.');
+    if(state.tool && typeof state.tool.loadThumbnails === 'function'){
+      state.tool.loadThumbnails().catch(e=>toast('Error: ' + (e?.message||e)));
+    }
   });
 
   ;['dragenter','dragover'].forEach(ev=>{
@@ -568,7 +639,7 @@ function updateRunEnabled(){
 (function bindPreviewControls(){
   const refresh = el('preview-refresh');
   const pageInp = el('preview-page');
-  const overlay = el('overlay-canvas');
+  initSignatureDragging();
 
   function doPreview(){
     const pdf = state.files.find(f=>f.type==='application/pdf');
@@ -578,46 +649,6 @@ function updateRunEnabled(){
 
   refresh.addEventListener('click', doPreview);
   pageInp.addEventListener('change', doPreview);
-
-  let dragging = false;
-  let dx = 0;
-  let dy = 0;
-
-  function updateFromPointer(clientX, clientY){
-    if(!state.signOverlayActive) return;
-    const m = getSignOverlayMetrics();
-    if(!m) return;
-    const rect = overlay.getBoundingClientRect();
-    const localX = Math.max(0, Math.min(m.canvasW, clientX - rect.left));
-    const localY = Math.max(0, Math.min(m.canvasH, clientY - rect.top));
-    const xPx = Math.max(0, Math.min(m.canvasW - m.wPx, localX - dx));
-    const yPx = Math.max(0, Math.min(m.canvasH - m.hPx, localY - dy));
-
-    const xPt = Math.round(xPx * (state.preview.pdfWidth / m.canvasW));
-    const yTopPt = Math.round(yPx * (state.preview.pdfHeight / m.canvasH));
-
-    if(el('sg-x')) el('sg-x').value = String(xPt);
-    if(el('sg-y')) el('sg-y').value = String(yTopPt);
-    drawSignOverlay();
-  }
-
-  overlay.addEventListener('mousedown', e=>{
-    if(!state.signOverlayActive) return;
-    const m = getSignOverlayMetrics();
-    if(!m) return;
-    const rect = overlay.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    const inside = px>=m.xPx && px<=m.xPx+m.wPx && py>=m.yPx && py<=m.yPx+m.hPx;
-    if(!inside) return;
-    dragging = true;
-    dx = px - m.xPx;
-    dy = py - m.yPx;
-    e.preventDefault();
-  });
-
-  window.addEventListener('mousemove', e=>{ if(dragging) updateFromPointer(e.clientX, e.clientY); });
-  window.addEventListener('mouseup', ()=>{ dragging = false; });
 })();
 
 // ---------- Run / Reset ----------
@@ -640,6 +671,9 @@ function updateRunEnabled(){
 
   resetBtn.addEventListener('click', ()=>{
     if(!state.tool) return;
+    if(typeof state.tool.cleanup === 'function'){
+      try{ state.tool.cleanup(); }catch(e){ console.warn('Tool cleanup failed:', e); }
+    }
     el('tool-options').innerHTML='';
     state.tool.buildOptions?.(el('tool-options'));
     updateRunEnabled();
@@ -778,27 +812,142 @@ function simpleToolExtract(){
 
 // ---------- Tool: Reorder ----------
 function simpleToolReorder(){
+  const MAX_THUMBNAILS = 50;
+  const reorderState = {
+    pageOrder: [],
+    fileKey: '',
+    loading: false,
+  };
+
+  const fileToKey = (file)=> file ? `${file.name}:${file.size}:${file.lastModified||0}` : '';
+
+  function moveItem(from, to){
+    if(from === to) return;
+    if(from < 0 || to < 0 || from >= reorderState.pageOrder.length || to >= reorderState.pageOrder.length) return;
+    const [moved] = reorderState.pageOrder.splice(from, 1);
+    reorderState.pageOrder.splice(to, 0, moved);
+  }
+
+  function renderGrid(){
+    const grid = el('reorder-grid');
+    if(!grid) return;
+    const wrappers = Array.from(grid.querySelectorAll('.thumb-wrapper'));
+    wrappers.forEach((node, idx)=>{
+      const pageIdx = reorderState.pageOrder[idx];
+      node.dataset.pageIndex = String(pageIdx);
+      const badge = node.querySelector('.page-num');
+      if(badge) badge.textContent = `Page ${pageIdx + 1}`;
+    });
+  }
+
   return {
-    id:'reorder', name:'Reorder Pages', category:'Core', accept:'pdf',
-    desc:'Reorder pages by typing a new sequence (e.g., 3,1,2).',
-    how:'Copies pages into a new document using your new order.',
-    mistakes:'You must include each page number exactly once (1-based).',
-    tips:'For large documents, start with small tests (e.g., 1-5).',
+    id:'reorder', name:'Visual Reorder', category:'Core', accept:'pdf',
+    desc:'Drag and drop page thumbnails to change PDF order.',
+    how:'Renders lightweight thumbnails and updates the page sequence as you drag.',
+    mistakes:'Upload exactly one PDF and finish rearranging before running.',
+    tips:`For large PDFs, only the first ${MAX_THUMBNAILS} pages are shown to keep the app responsive.`,
     buildOptions(root){
       root.innerHTML = `
-        <div class="opt">
-          <label>New page order (e.g., 3,1,2,4)</label>
-          <input id="ro-order" placeholder="3,1,2,4" />
-          <div class="mini">Upload exactly one PDF. Order must include all pages once.</div>
-        </div>
+        <p class="mini">Drag and drop the thumbnails to reorder pages.</p>
+        <div id="reorder-limit-note" class="warn" style="display:none; margin-bottom:10px;"></div>
+        <div id="reorder-grid" class="thumbnail-grid"></div>
       `;
-      el('ro-order').addEventListener('input', updateRunEnabled);
+      this.loadThumbnails();
+      updateRunEnabled();
+    },
+    cleanup(){
+      reorderState.loading = false;
+    },
+    async loadThumbnails(){
+      const grid = el('reorder-grid');
+      const limitNote = el('reorder-limit-note');
+      if(!grid) return;
+
+      const pdfs = state.files.filter(f=>f.type==='application/pdf');
+      if(pdfs.length !== 1){
+        grid.innerHTML = '<div class="mini">Upload exactly one PDF to load thumbnails.</div>';
+        if(limitNote) limitNote.style.display = 'none';
+        reorderState.pageOrder = [];
+        reorderState.fileKey = '';
+        return;
+      }
+
+      const file = pdfs[0];
+      const currentKey = fileToKey(file);
+      if(reorderState.loading && reorderState.fileKey === currentKey) return;
+
+      reorderState.loading = true;
+      grid.innerHTML = 'Loading thumbnails...';
+      reorderState.fileKey = currentKey;
+
+      try{
+        const pdf = await readPDFjs(file);
+        const totalPages = pdf.numPages;
+        const visiblePages = Math.min(totalPages, MAX_THUMBNAILS);
+        reorderState.pageOrder = Array.from({ length: visiblePages }, (_, i)=>i);
+        grid.innerHTML = '';
+
+        if(limitNote){
+          if(totalPages > MAX_THUMBNAILS){
+            limitNote.style.display = 'block';
+            limitNote.textContent = `Showing first ${MAX_THUMBNAILS} of ${totalPages} pages. Use this tool on smaller chunks for full control.`;
+          }else{
+            limitNote.style.display = 'none';
+            limitNote.textContent = '';
+          }
+        }
+
+        for(let pageNum = 1; pageNum <= visiblePages; pageNum++){
+          const page = await pdf.getPage(pageNum);
+          const canvas = document.createElement('canvas');
+          const viewport = page.getViewport({ scale: 0.24 });
+          canvas.width = Math.max(1, Math.floor(viewport.width));
+          canvas.height = Math.max(1, Math.floor(viewport.height));
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+          const wrapper = document.createElement('div');
+          wrapper.className = 'thumb-wrapper';
+          wrapper.draggable = true;
+          wrapper.dataset.pageIndex = String(pageNum - 1);
+          wrapper.innerHTML = `<div class="page-num">Page ${pageNum}</div>`;
+          wrapper.appendChild(canvas);
+
+          wrapper.addEventListener('dragstart', e=>{
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(pageNum - 1));
+            wrapper.classList.add('dragging');
+          });
+          wrapper.addEventListener('dragend', ()=> wrapper.classList.remove('dragging'));
+          wrapper.addEventListener('dragover', e=> e.preventDefault());
+          wrapper.addEventListener('drop', e=>{
+            e.preventDefault();
+            const draggedPageIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            const targetPageIndex = parseInt(wrapper.dataset.pageIndex || '-1', 10);
+            const from = reorderState.pageOrder.indexOf(draggedPageIndex);
+            const to = reorderState.pageOrder.indexOf(targetPageIndex);
+            if(from < 0 || to < 0 || from === to) return;
+            moveItem(from, to);
+
+            const dragNode = grid.querySelector(`.thumb-wrapper[data-page-index="${draggedPageIndex}"]`);
+            if(!dragNode || dragNode === wrapper) return;
+            if(from < to) grid.insertBefore(dragNode, wrapper.nextSibling);
+            else grid.insertBefore(dragNode, wrapper);
+            renderGrid();
+          });
+
+          grid.appendChild(wrapper);
+        }
+      }catch(e){
+        grid.innerHTML = `<div class="mini">Could not load thumbnails: ${escapeHtml(e?.message||String(e))}</div>`;
+        reorderState.pageOrder = [];
+      }finally{
+        reorderState.loading = false;
+      }
     },
     validate(){
       const pdfs = state.files.filter(f=>f.type==='application/pdf');
       if(pdfs.length !== 1) return 'Upload exactly 1 PDF to reorder.';
-      const v = String(el('ro-order')?.value||'').trim();
-      if(!v) return 'Enter a page order like 3,1,2.';
+      if(!reorderState.pageOrder.length) return 'Thumbnails are still loading.';
       return '';
     },
     async run(){
@@ -807,21 +956,19 @@ function simpleToolReorder(){
       const src = await lib.PDFDocument.load(await loadPdfBytes(file));
       const max = src.getPageCount();
 
-      const raw = String(el('ro-order').value||'');
-      const seq = raw
-        .split(',')
-        .map(s=>parseInt(s.trim(),10))
-        .filter(n=>Number.isFinite(n));
-      if(seq.length !== raw.split(',').filter(Boolean).length) throw new Error('Order contains non-numeric values.');
+      if(max > MAX_THUMBNAILS){
+        throw new Error(`Visual reorder supports up to ${MAX_THUMBNAILS} pages at once. Split the PDF first.`);
+      }
 
-      if(seq.length !== max) throw new Error(`Order must include exactly ${max} pages.`);
-      const set = new Set(seq);
-      if(set.size !== max) throw new Error('Order contains duplicates.');
-      if(seq.some(n=>n<1 || n>max)) throw new Error('Order contains invalid page numbers.');
+      const grid = el('reorder-grid');
+      const domOrder = grid
+        ? Array.from(grid.children).map(c=>parseInt(c.dataset.pageIndex || '-1', 10)).filter(n=>n>=0)
+        : [];
+      const seq = domOrder.length === max ? domOrder : reorderState.pageOrder;
+      if(seq.length !== max) throw new Error(`Could not determine full page order (${seq.length}/${max}).`);
 
       const out = await lib.PDFDocument.create();
-      const indices = seq.map(n=>n-1);
-      const copied = await out.copyPages(src, indices);
+      const copied = await out.copyPages(src, seq);
       copied.forEach(p=>out.addPage(p));
 
       const bytes = await out.save();
