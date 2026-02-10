@@ -94,7 +94,7 @@ function saveCompact(v){
 async function readPDFjs(file){
   const pdfjsLib = ensurePdfjsWorker();
   const buf = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: buf });
+  const loadingTask = pdfjsLib.getDocument({ data: buf, disableWorker: true });
   return await loadingTask.promise;
 }
 
