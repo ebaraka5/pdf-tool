@@ -547,29 +547,6 @@ document.addEventListener('DOMContentLoaded', ()=>{
 async function loadPdfBytes(file){
   return new Uint8Array(await file.arrayBuffer());
 }
-function parseRanges(str, maxPages){
-  // Supports: "1-3,5,7-9" (1-based)
-  const out = [];
-  const s = String(str||'').trim();
-  if(!s) return out;
-  for(const part of s.split(',').map(x=>x.trim()).filter(Boolean)){
-    const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
-    if(m){
-      let a = parseInt(m[1],10), b = parseInt(m[2],10);
-      if(Number.isNaN(a)||Number.isNaN(b)) continue;
-      if(a>b) [a,b]=[b,a];
-      a = Math.max(1,a); b = Math.min(maxPages,b);
-      for(let i=a;i<=b;i++) out.push(i);
-    }else{
-      const n = parseInt(part,10);
-      if(!Number.isNaN(n) && n>=1 && n<=maxPages) out.push(n);
-    }
-  }
-  // de-dupe preserve order
-  const seen = new Set();
-  return out.filter(p=> (seen.has(p)?false:(seen.add(p),true)));
-}
-
 // ---------- Tool: Merge ----------
 function simpleToolMerge(){
   return {
@@ -861,7 +838,7 @@ function simpleToolRemoveBlank(){
           <div class="opt">
             <label>Max pages to scan (0 = all)</label>
             <input id="rb-maxpages" type="number" min="0" value="0">
-            <div class="mini">For huge PDFs, cap scanning for speed.</div>
+            <div class="mini">For huge PDFs, cap scanning for speed. Pages after the cap are preserved as-is.</div>
           </div>
         </div>
       `;
@@ -1544,7 +1521,7 @@ function simpleToolMetadata(){
         </div>
         <div class="row2">
           <div class="opt"><label>Subject</label><input id="md-subject" placeholder="(optional)"></div>
-          <div class="opt"><label>Keywords</label><input id="md-keywords" placeholder="(comma separated)"></div>
+          <div class="opt"><label>Keywords</label><input id="md-keywords" placeholder="(comma-separated)"></div>
         </div>
         <div class="row2">
           <div class="opt"><label>Producer</label><input id="md-producer" placeholder="(optional)"></div>
@@ -2196,12 +2173,17 @@ function simpleToolPDFToPNG(){
       await task.promise;
 
       const blob = await new Promise(res=>canvas.toBlob(res, 'image/png'));
+      if(!blob){
+        toast('Failed to export PNG (browser could not create image).');
+        return;
+      }
+      const outName = file.name.replace(/\.pdf$/i,'') + `-p${pageNum}.png`;
       if(window.saveAs){
-        window.saveAs(blob, file.name.replace(/\.pdf$/i,'') + `-p${pageNum}.png`);
+        window.saveAs(blob, outName);
       }else{
         const a=document.createElement('a');
         a.href=URL.createObjectURL(blob);
-        a.download=file.name.replace(/\.pdf$/i,'') + `-p${pageNum}.png`;
+        a.download=outName;
         document.body.appendChild(a);
         a.click();
         setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},250);
