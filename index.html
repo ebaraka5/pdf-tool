@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="Privacy-first PDF tools that run locally in your browser. Merge, split, watermark, sign, and more without uploading files." />
   <title>PDF Workspace</title>
 
   <!-- Dependencies (CDN) -->
   <script defer src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"></script>
+  <script defer src="./pdf.worker.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -228,6 +229,10 @@
       font-size:13px;
       color:var(--muted);
     }
+    .privacy-box{ margin:10px 0 0; }
+    .diag-modal{ position:fixed; inset:0; background:rgba(15,23,42,.45); display:grid; place-items:center; z-index:50; }
+    .diag-card{ width:min(700px,92vw); background:#fff; border:1px solid var(--border); border-radius:14px; padding:14px; }
+    .diag-pre{ background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:10px; min-height:120px; white-space:pre-wrap; }
     .topbar{
       display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
       padding:6px 4px 10px;
@@ -359,6 +364,7 @@
 </head>
 
 <body>
+  <noscript><div style="padding:12px; background:#fef3c7; color:#92400e; border-bottom:1px solid #f59e0b;">PDF Workspace requires JavaScript to run local PDF processing.</div></noscript>
   <header class="page-hero">
     <div class="hero-logo" aria-hidden="true">
       <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -373,7 +379,7 @@
     <div>
       <h1 class="hero-title">PDF Workspace</h1>
       <div class="hero-subtitle">Privacy-First PDF Tools • No Uploads • Runs Locally</div>
-      <div class="hero-note">🔒 Files never leave your browser</div>
+      <div class="hero-note">🔒 Files never leave your browser. Preview worker is served locally.</div>
     </div>
   </header>
 
@@ -389,6 +395,7 @@
       <div class="search">
         <input id="tool-search" placeholder="Search tools…" autocomplete="off" />
         <button id="compact-toggle" class="btn btn-sm" type="button">Compact sidebar</button>
+        <button id="open-diagnostics" class="btn btn-sm" type="button">Diagnostics</button>
       </div>
 
       <div id="tool-list"></div>
@@ -400,6 +407,10 @@
         <div>
           <h2 id="tool-title">Choose a tool</h2>
           <div id="tool-desc"></div>
+          <details class="privacy-box">
+            <summary><b>Privacy & How It Works</b></summary>
+            <div class="mini" style="margin-top:8px;">All processing happens in your browser tab. Files are not uploaded by this app. PDF preview uses a locally hosted worker script.</div>
+          </details>
         </div>
       </div>
 
@@ -445,6 +456,16 @@
       </div>
     </aside>
 
+  </div>
+  <div id="diagnostics-modal" class="diag-modal" hidden>
+    <div class="diag-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <h3 style="margin:0;">Diagnostics</h3>
+        <button id="close-diagnostics" class="btn btn-sm" type="button">Close</button>
+      </div>
+      <div class="mini" style="margin:8px 0;">Use this to verify local dependencies, worker path, and runtime state.</div>
+      <pre id="diagnostics-output" class="diag-pre"></pre>
+    </div>
   </div>
 </body>
 </html>
