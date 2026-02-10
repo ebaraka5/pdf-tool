@@ -28,9 +28,7 @@ let signDragOffsetY = 0;
 function ensurePdfjsWorker(){
   const pdfjsLib = getPDFJS();
   try{
-    if(!pdfjsLib.GlobalWorkerOptions.workerSrc){
-      pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
-    }
+    pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
   }catch(_){}
   return pdfjsLib;
 }
@@ -96,7 +94,7 @@ function saveCompact(v){
 async function readPDFjs(file){
   const pdfjsLib = ensurePdfjsWorker();
   const buf = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: buf, disableWorker: true });
+  const loadingTask = pdfjsLib.getDocument({ data: buf });
   return await loadingTask.promise;
 }
 
