@@ -230,9 +230,6 @@
       color:var(--muted);
     }
     .privacy-box{ margin:10px 0 0; }
-    .diag-modal{ position:fixed; inset:0; background:rgba(15,23,42,.45); display:grid; place-items:center; z-index:50; }
-    .diag-card{ width:min(700px,92vw); background:#fff; border:1px solid var(--border); border-radius:14px; padding:14px; }
-    .diag-pre{ background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:10px; min-height:120px; white-space:pre-wrap; }
     .topbar{
       display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
       padding:6px 4px 10px;
@@ -395,7 +392,6 @@
       <div class="search">
         <input id="tool-search" placeholder="Search tools…" autocomplete="off" />
         <button id="compact-toggle" class="btn btn-sm" type="button">Compact sidebar</button>
-        <button id="open-diagnostics" class="btn btn-sm" type="button">Diagnostics</button>
       </div>
 
       <div id="tool-list"></div>
@@ -455,17 +451,6 @@
         <div class="mini" id="preview-note">Upload a PDF and select a tool to preview page 1.</div>
       </div>
     </aside>
-
-  </div>
-  <div id="diagnostics-modal" class="diag-modal" hidden>
-    <div class="diag-card">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-        <h3 style="margin:0;">Diagnostics</h3>
-        <button id="close-diagnostics" class="btn btn-sm" type="button">Close</button>
-      </div>
-      <div class="mini" style="margin:8px 0;">Use this to verify local dependencies, worker path, and runtime state.</div>
-      <pre id="diagnostics-output" class="diag-pre"></pre>
-    </div>
   </div>
 </body>
 </html>

@@ -36,40 +36,6 @@ function toast(msg){
 }
 
 
-function bindDiagnostics(){
-  const openBtn = el('open-diagnostics');
-  const closeBtn = el('close-diagnostics');
-  const modal = el('diagnostics-modal');
-  const out = el('diagnostics-output');
-  const refresh = ()=>{
-    if(!out) return;
-    const deps = {
-      PDFLib: !!window.PDFLib,
-      pdfjsLib: !!window.pdfjsLib,
-      JSZip: !!window.JSZip,
-      html2pdf: !!window.html2pdf
-    };
-    out.textContent = [
-      `online: ${navigator.onLine}`,
-      `pdfjs workerSrc: ${window.pdfjsLib?.GlobalWorkerOptions?.workerSrc || '(unset)'}`,
-      `deps: ${JSON.stringify(deps)}`,
-      `files loaded: ${state.files.length}`,
-      `active tool: ${state.toolId || '(none)'}`,
-      `run in progress: ${state.runInProgress}`
-    ].join('\n');
-  };
-
-  if(openBtn){
-    openBtn.addEventListener('click', ()=>{
-      refresh();
-      if(modal) modal.hidden = false;
-    });
-  }
-  if(closeBtn){
-    closeBtn.addEventListener('click', ()=>{ if(modal) modal.hidden = true; });
-  }
-}
-
 function bindNetworkAttemptLogger(){
   if(!location.hash.includes('dev-network-log=1')) return;
   const nativeFetch = window.fetch?.bind(window);
@@ -826,7 +792,6 @@ document.addEventListener('DOMContentLoaded', ()=>{
     buildSidebar();
     bindSidebarControls();
     bindToolSearch();
-    bindDiagnostics();
     bindNetworkAttemptLogger();
 
     if(state.compact){
