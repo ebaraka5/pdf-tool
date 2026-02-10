@@ -40,10 +40,12 @@
         linear-gradient(160deg, var(--bg), var(--bg-alt) 60%);
       color:var(--text);
       overflow:hidden;
+      display:flex;
+      flex-direction:column;
     }
 
     /* 3-column layout: LEFT sidebar, MAIN, RIGHT sidebar */
-    .app{ display:flex; height:100%; width:100%; }
+    .app{ display:flex; flex:1 1 auto; min-height:0; width:100%; }
 
     /* LEFT sidebar */
     #sidebar{
@@ -195,8 +197,8 @@
       border-radius:0 0 22px 22px;
       background: linear-gradient(120deg, rgba(30,41,59,.95), rgba(15,23,42,.8));
       border:1px solid var(--border);
-      margin:2px -18px 16px;
-      width: calc(100% + 36px);
+      margin:0 0 16px;
+      width:100%;
       box-shadow: 0 14px 30px rgba(15,23,42,.35);
     }
     .hero-logo{
@@ -279,6 +281,24 @@
 </head>
 
 <body>
+  <header class="page-hero">
+    <div class="hero-logo" aria-hidden="true">
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="6" y="5" width="20" height="26" rx="4" fill="rgba(96,165,250,.25)" stroke="rgba(148,163,184,.7)" stroke-width="1.5"/>
+        <path d="M22 5H18C15.7909 5 14 6.79086 14 9V13" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M10 18H22M10 22H22M10 26H18" stroke="rgba(96,165,250,.95)" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="27" cy="26" r="5" fill="rgba(167,139,250,.25)" stroke="rgba(167,139,250,.9)" stroke-width="1.5"/>
+        <path d="M27 24V28" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M25 26H29" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div>
+      <h1 class="hero-title">PDF Workspace</h1>
+      <div class="hero-subtitle">Privacy-First PDF Tools • No Uploads • Runs Locally</div>
+      <div class="hero-note">🔒 Files never leave your browser</div>
+    </div>
+  </header>
+
   <div class="app">
 
     <!-- LEFT SIDEBAR -->
@@ -298,23 +318,6 @@
 
     <!-- MAIN -->
     <main id="main">
-      <header class="page-hero">
-        <div class="hero-logo" aria-hidden="true">
-          <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="6" y="5" width="20" height="26" rx="4" fill="rgba(96,165,250,.25)" stroke="rgba(148,163,184,.7)" stroke-width="1.5"/>
-            <path d="M22 5H18C15.7909 5 14 6.79086 14 9V13" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
-            <path d="M10 18H22M10 22H22M10 26H18" stroke="rgba(96,165,250,.95)" stroke-width="1.5" stroke-linecap="round"/>
-            <circle cx="27" cy="26" r="5" fill="rgba(167,139,250,.25)" stroke="rgba(167,139,250,.9)" stroke-width="1.5"/>
-            <path d="M27 24V28" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
-            <path d="M25 26H29" stroke="rgba(248,250,252,.9)" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        </div>
-        <div>
-          <h1 class="hero-title">PDF Workspace</h1>
-          <div class="hero-subtitle">Privacy-First PDF Tools • No Uploads • Runs Locally</div>
-          <div class="hero-note">🔒 Files never leave your browser</div>
-        </div>
-      </header>
       <div class="topbar">
         <div>
           <h2 id="tool-title">Choose a tool</h2>
