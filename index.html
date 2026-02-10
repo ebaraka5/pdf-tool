@@ -290,7 +290,7 @@
     .file-list{ display:flex; flex-direction:column; gap:6px; }
     .file-item{
       display:grid;
-      grid-template-columns: 20px 1fr auto;
+      grid-template-columns: 20px 1fr auto auto;
       align-items:center;
       gap:8px;
       padding:8px 10px;
@@ -301,9 +301,19 @@
     }
     .file-item.dragging{ opacity:.65; }
     .file-item.over{ border-color: var(--accent); background:#eff6ff; }
+    .file-item.previewing{ border-color: rgba(59,130,246,.85); box-shadow: 0 0 0 2px rgba(59,130,246,.18); }
     .drag-handle{ color:var(--muted); }
     .file-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .file-size{ color:var(--muted); font-size:12px; }
+    .preview-indicator{
+      display:none;
+      font-size:11px;
+      color:#1d4ed8;
+      background:rgba(59,130,246,.14);
+      border-radius:999px;
+      padding:2px 8px;
+    }
+    .file-item.previewing .preview-indicator{ display:inline-block; }
 
     /* Thumbnail Grid */
     .thumbnail-grid {

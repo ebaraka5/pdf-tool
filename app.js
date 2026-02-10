@@ -24,13 +24,29 @@ let signDragBound = false;
 let signDragActive = false;
 let signDragOffsetX = 0;
 let signDragOffsetY = 0;
+const PDFJS_VERSION = '3.11.174';
 
 function ensurePdfjsWorker(){
   const pdfjsLib = getPDFJS();
   try{
-    pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.js`;
   }catch(_){}
   return pdfjsLib;
+}
+
+
+async function detectScannedPdfWarning(file, maxPages = 3){
+  if(!file || !isPdfFile(file)) return '';
+  const pdf = await readPDFjs(file);
+  const pageLimit = Math.min(Math.max(1, maxPages), pdf.numPages);
+  let charCount = 0;
+  for(let p=1; p<=pageLimit; p++){
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    const pageChars = (tc.items || []).reduce((sum, it)=>sum + String(it.str || '').trim().length, 0);
+    charCount += pageChars;
+  }
+  return charCount === 0 ? '⚠️ This looks like a scanned image. Text-based tools may not work.' : '';
 }
 
 function toast(msg){
@@ -323,6 +339,8 @@ const state = {
   runToken: 0,
   runInProgress: false,
   sidebarBtnCache: new Map(),
+  previewFileIndex: -1,
+  signState: { imageBytes:null, imageType:'png', imgW:0, imgH:0, imageName:'' },
 };
 
 function assignToolIcons(){
@@ -572,13 +590,17 @@ function setTool(id){
   }catch(_){}
 
   // update preview immediately for selected tool
-  const pdf = state.files.find(isPdfFile);
+  const selected = state.files[state.previewFileIndex] || null;
+  const pdf = selected && isPdfFile(selected) ? selected : state.files.find(isPdfFile);
   const pn = parseInt(el('preview-page')?.value||'1',10) || 1;
   renderPreview(pdf || null, pn);
 }
 
 function updateFileList(){
   const list = el('file-list');
+  if(state.previewFileIndex >= state.files.length){
+    state.previewFileIndex = state.files.length ? 0 : -1;
+  }
   if(!state.files.length){
     list.textContent = 'No files selected.';
     return;
@@ -591,9 +613,18 @@ function updateFileList(){
   state.files.forEach((f, idx)=>{
     const row = document.createElement('div');
     row.className = 'file-item';
+    row.classList.toggle('previewing', idx === state.previewFileIndex);
     row.draggable = true;
     row.dataset.index = String(idx);
-    row.innerHTML = `<span class="drag-handle" aria-hidden="true">↕</span><span class="file-name">${escapeHtml(f.name)}</span><span class="file-size">${Math.round(f.size/1024)} KB</span>`;
+    row.innerHTML = `<span class="drag-handle" aria-hidden="true">↕</span><span class="file-name">${escapeHtml(f.name)}</span><span class="file-size">${Math.round(f.size/1024)} KB</span><span class="preview-indicator">Previewing</span>`;
+
+    row.addEventListener('click', ()=>{
+      state.previewFileIndex = idx;
+      updateFileList();
+      const selected = state.files[state.previewFileIndex];
+      const pn = parseInt(el('preview-page')?.value||'1',10) || 1;
+      renderPreview(selected && isPdfFile(selected) ? selected : null, pn);
+    });
 
     row.addEventListener('dragstart', ()=>{
       dragIndex = idx;
@@ -616,6 +647,9 @@ function updateFileList(){
       if(!Number.isInteger(dragIndex) || dragIndex < 0 || dragIndex === targetIndex) return;
       const moved = state.files.splice(dragIndex, 1)[0];
       state.files.splice(targetIndex, 0, moved);
+      if(state.previewFileIndex === dragIndex) state.previewFileIndex = targetIndex;
+      else if(dragIndex < state.previewFileIndex && targetIndex >= state.previewFileIndex) state.previewFileIndex -= 1;
+      else if(dragIndex > state.previewFileIndex && targetIndex <= state.previewFileIndex) state.previewFileIndex += 1;
       updateFileList();
       updateRunEnabled();
       if(state.tool && typeof state.tool.loadThumbnails === 'function'){
@@ -663,17 +697,25 @@ function updateRunEnabled(){
   const clearBtn = el('clear-files');
 
   function addFiles(files){
+    let added = false;
     for(const f of files){
       if(!state.files.find(x=>x.name===f.name && x.size===f.size)){
         state.files.push(f);
+        added = true;
       }
     }
+    if(added && state.previewFileIndex < 0) state.previewFileIndex = 0;
     updateFileList();
     updateRunEnabled();
 
-    // auto-preview first PDF
-    const pdf = state.files.find(isPdfFile);
+    // auto-preview selected PDF
+    const selected = state.files[state.previewFileIndex] || null;
+    const pdf = selected && isPdfFile(selected) ? selected : state.files.find(isPdfFile);
     if(pdf){
+      if(!(selected && isPdfFile(selected))){
+        state.previewFileIndex = state.files.indexOf(pdf);
+        updateFileList();
+      }
       const pn = parseInt(el('preview-page')?.value||'1',10) || 1;
       renderPreview(pdf, pn);
     }
@@ -690,6 +732,7 @@ function updateRunEnabled(){
 
   clearBtn.addEventListener('click', ()=>{
     state.files = [];
+    state.previewFileIndex = -1;
     state.runToken += 1;
     clearPreviewCanvas();
     updateFileList();
@@ -726,7 +769,8 @@ function updateRunEnabled(){
   initSignatureDragging();
 
   function doPreview(){
-    const pdf = state.files.find(isPdfFile);
+    const selected = state.files[state.previewFileIndex] || null;
+    const pdf = selected && isPdfFile(selected) ? selected : state.files.find(isPdfFile);
     const pn = parseInt(pageInp.value||'1',10) || 1;
     renderPreview(pdf || null, pn);
   }
@@ -1568,8 +1612,6 @@ function simpleToolBates(){
 }
 // ---------- Tool: Bulk Sign ----------
 function simpleToolSign(){
-  // signature state (tool-level)
-  const sigState = { imageBytes:null, imageType:'png', imgW:0, imgH:0 };
 
   async function loadImageBytes(file){
     const buf = new Uint8Array(await file.arrayBuffer());
@@ -1660,26 +1702,43 @@ function simpleToolSign(){
       const imgInp = el('sg-img');
       const thumb = el('sg-thumb');
 
+      if(state.signState.imageBytes){
+        const mime = state.signState.imageType === 'jpg' ? 'image/jpeg' : 'image/png';
+        const restoredUrl = URL.createObjectURL(new Blob([state.signState.imageBytes], { type:mime }));
+        const name = state.signState.imageName ? ` <span class="mini">(${escapeHtml(state.signState.imageName)})</span>` : '';
+        thumb.innerHTML = `<div class="mini"><b>Preview:</b>${name}</div><img src="${restoredUrl}" alt="signature" style="max-width:180px; max-height:90px; border-radius:10px; border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.10);">`;
+      }
+
       imgInp.addEventListener('change', async ()=>{
         const f = imgInp.files?.[0];
-        if(!f){ sigState.imageBytes=null; thumb.textContent=''; updateRunEnabled(); return; }
+        if(!f){
+          state.signState.imageBytes = null;
+          state.signState.imageName = '';
+          state.signState.imgW = 0;
+          state.signState.imgH = 0;
+          thumb.textContent='';
+          updateRunEnabled();
+          return;
+        }
 
         try{
           const { buf, w, h } = await loadImageBytes(f);
-          sigState.imageBytes = buf;
-          sigState.imageType = f.type.includes('jpeg') ? 'jpg' : 'png';
-          sigState.imgW = w; sigState.imgH = h;
+          state.signState.imageBytes = buf;
+          state.signState.imageType = f.type.includes('jpeg') ? 'jpg' : 'png';
+          state.signState.imgW = w; state.signState.imgH = h;
+          state.signState.imageName = f.name || '';
 
           // render thumbnail
           const u = URL.createObjectURL(f);
-          thumb.innerHTML = `<div class="mini"><b>Preview:</b></div><img src="${u}" alt="signature" style="max-width:180px; max-height:90px; border-radius:10px; border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.10);">`;
+          thumb.innerHTML = `<div class="mini"><b>Preview:</b> <span class="mini">(${escapeHtml(f.name || 'signature')})</span></div><img src="${u}" alt="signature" style="max-width:180px; max-height:90px; border-radius:10px; border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.10);">`;
 
           // auto-size to maxscale if too large (based on a typical page width guess)
           // Real scaling will happen per page at run time too.
           updateRunEnabled();
         }catch(e){
           thumb.textContent = 'Could not load signature image.';
-          sigState.imageBytes = null;
+          state.signState.imageBytes = null;
+          state.signState.imageName = '';
           updateRunEnabled();
         }
       });
@@ -1694,7 +1753,7 @@ function simpleToolSign(){
     validate(){
       const pdfs = state.files.filter(f=>f.type==='application/pdf');
       if(!pdfs.length) return 'Upload at least 1 PDF.';
-      if(!sigState.imageBytes) return 'Upload a signature image (PNG/JPG).';
+      if(!state.signState.imageBytes) return 'Upload a signature image (PNG/JPG).';
       return '';
     },
     async run(){
@@ -1720,9 +1779,9 @@ function simpleToolSign(){
         const doc = await lib.PDFDocument.load(bytes);
 
         // embed signature image
-        const img = sigState.imageType==='jpg'
-          ? await doc.embedJpg(sigState.imageBytes)
-          : await doc.embedPng(sigState.imageBytes);
+        const img = state.signState.imageType==='jpg'
+          ? await doc.embedJpg(state.signState.imageBytes)
+          : await doc.embedPng(state.signState.imageBytes);
 
         const pageCount = doc.getPageCount();
         const pages = pagesStr ? parseRanges(pagesStr, pageCount) : [pageCount];
@@ -1774,9 +1833,19 @@ function simpleToolRedact(){
           <label>Redaction boxes (one per line)</label>
           <textarea id="rd-boxes" class="ta" rows="6" placeholder="page,x,y,width,height&#10;1,60,120,200,18&#10;2,50,500,300,30"></textarea>
           <div class="mini">Coordinates are in <b>PDF points</b> from bottom-left (x,y). Page is 1-based.</div>
+          <div id="rd-scan-warning" class="warn" style="display:none; margin-top:8px;"></div>
         </div>
       `;
       el('rd-boxes').addEventListener('input', updateRunEnabled);
+      const pdf = state.files.find(f=>f.type==='application/pdf');
+      detectScannedPdfWarning(pdf, 3)
+        .then(msg=>{
+          const warn = el('rd-scan-warning');
+          if(!warn) return;
+          warn.style.display = msg ? '' : 'none';
+          warn.textContent = msg;
+        })
+        .catch(()=>{});
     },
     validate(){
       const pdfs = state.files.filter(f=>f.type==='application/pdf');
@@ -1878,17 +1947,12 @@ function simpleToolPIIScan(){
       const pdf = await readPDFjs(file);
       const maxPages = Math.min(pdf.numPages, Math.max(1, parseInt(el('pii-pages').value||'3',10)||3));
       let text = '';
-      let hasTextLayer = false;
+      const scanWarning = await detectScannedPdfWarning(file, 3);
       for(let p=1;p<=maxPages;p++){
         const page = await pdf.getPage(p);
         const tc = await page.getTextContent();
-        if((tc.items||[]).length) hasTextLayer = true;
         text += tc.items.map(it=>it.str).join(' ') + '\n';
       }
-
-      const scanWarning = !hasTextLayer
-        ? 'Warning: This PDF appears to be a scanned image. PII scanning may not be accurate without OCR.'
-        : '';
 
       // Patterns
       const emailRe = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
