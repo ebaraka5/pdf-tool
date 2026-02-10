@@ -14,11 +14,22 @@ function requireGlobal(name){
 function getPDFLib(){ return requireGlobal('PDFLib'); }
 function getPDFJS(){ return requireGlobal('pdfjsLib'); }
 
+let activePreviewRenderTask = null;
+
+function detectPdfjsVersionFromScripts(){
+  const script = document.querySelector('script[src*="pdfjs-dist"][src*="/build/pdf.min.js"]');
+  if(!script) return '';
+  const src = String(script.getAttribute('src') || '');
+  const m = src.match(/pdfjs-dist@([^/]+)\/build\/pdf\.min\.js/);
+  return m?.[1] || '';
+}
+
 function ensurePdfjsWorker(){
   const pdfjsLib = getPDFJS();
   try{
     if(!pdfjsLib.GlobalWorkerOptions.workerSrc){
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+      const version = detectPdfjsVersionFromScripts() || '3.11.174';
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.min.js`;
     }
   }catch(_){}
   return pdfjsLib;
@@ -83,7 +94,11 @@ async function renderPreview(file, pageNum){
   const ctx = canvas.getContext('2d');
   note.textContent = '';
   try{
-    if(!file) { note.textContent='Upload a PDF to preview.'; return; }
+    if(activePreviewRenderTask){
+      activePreviewRenderTask.cancel();
+      activePreviewRenderTask = null;
+    }
+    if(!file) { state.preview = { pdfWidth:0, pdfHeight:0, canvasWidth:canvas.width||0, canvasHeight:canvas.height||0 }; note.textContent='Upload a PDF to preview.'; drawSignOverlay(); return; }
     if(file.type !== 'application/pdf') { note.textContent='Preview supports PDFs only.'; return; }
 
     const pdf = await readPDFjs(file);
@@ -93,18 +108,78 @@ async function renderPreview(file, pageNum){
 
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
+    state.preview = {
+      pdfWidth: viewport.width / 1.25,
+      pdfHeight: viewport.height / 1.25,
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height
+    };
 
-    const renderTask = page.render({ canvasContext: ctx, viewport });
-    await renderTask.promise;
+    activePreviewRenderTask = page.render({ canvasContext: ctx, viewport });
+    await activePreviewRenderTask.promise;
+    activePreviewRenderTask = null;
     note.textContent = `Showing page ${pn} of ${pdf.numPages}.`;
+    drawSignOverlay();
   }catch(e){
+    if(e?.name === 'RenderingCancelledException') return;
     note.textContent = 'Preview error: ' + (e?.message||e);
   }
+}
+
+
+function getSignOverlayMetrics(){
+  const base = state.preview || { pdfWidth:0, pdfHeight:0, canvasWidth:0, canvasHeight:0 };
+  const pdfW = Number(base.pdfWidth || 0);
+  const pdfH = Number(base.pdfHeight || 0);
+  const canvasW = Number(base.canvasWidth || 0);
+  const canvasH = Number(base.canvasHeight || 0);
+  if(!pdfW || !pdfH || !canvasW || !canvasH) return null;
+
+  const x = parseFloat(el('sg-x')?.value || '0') || 0;
+  const yTop = parseFloat(el('sg-y')?.value || '0') || 0;
+  const w = Math.max(10, parseFloat(el('sg-w')?.value || '180') || 180);
+  const h = Math.max(10, parseFloat(el('sg-h')?.value || '60') || 60);
+
+  return {
+    xPx: x * (canvasW / pdfW),
+    yPx: yTop * (canvasH / pdfH),
+    wPx: w * (canvasW / pdfW),
+    hPx: h * (canvasH / pdfH),
+    canvasW,
+    canvasH
+  };
+}
+
+function drawSignOverlay(){
+  const ov = el('overlay-canvas');
+  if(!ov) return;
+  const ctx = ov.getContext('2d');
+  const base = el('preview-canvas');
+  ov.width = base.width || 0;
+  ov.height = base.height || 0;
+  ctx.clearRect(0,0,ov.width,ov.height);
+  if(!state.signOverlayActive || !ov.width || !ov.height) return;
+
+  const m = getSignOverlayMetrics();
+  if(!m) return;
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(96,165,250,.95)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8,4]);
+  ctx.strokeRect(m.xPx, m.yPx, m.wPx, m.hPx);
+  ctx.fillStyle = 'rgba(96,165,250,.15)';
+  ctx.fillRect(m.xPx, m.yPx, m.wPx, m.hPx);
+  ctx.restore();
 }
 
 async function downloadOutput(files){
   // files: [{name, bytes}]
   if(!Array.isArray(files) || !files.length) return;
+  if(files.length > 3){
+    await downloadAsZip(files, 'processed-pdfs.zip');
+    return;
+  }
   for(const f of files){
     const blob = new Blob([f.bytes], {type:'application/pdf'});
     if(window.saveAs){
@@ -156,6 +231,8 @@ const state = {
   lastToolDefaults: new Map(),
   depsReady: false,
   runLabel: 'Process',
+  preview: { pdfWidth:0, pdfHeight:0, canvasWidth:0, canvasHeight:0 },
+  signOverlayActive: false,
 };
 
 function assignToolIcons(){
@@ -381,6 +458,7 @@ function setTool(id){
   opts.innerHTML = `<h3 style="margin:0 0 10px;">Options</h3><div id="tool-options"></div>`;
   ui.appendChild(opts);
 
+  state.signOverlayActive = (tool.id === 'sign');
   const optRoot = opts.querySelector('#tool-options');
   tool.buildOptions?.(optRoot);
 
@@ -463,7 +541,9 @@ function updateRunEnabled(){
     updateFileList();
     updateRunEnabled();
     el('preview-canvas').getContext('2d').clearRect(0,0,9999,9999);
+    el('overlay-canvas')?.getContext('2d')?.clearRect(0,0,9999,9999);
     el('preview-note').textContent = 'Files cleared.';
+    toast('Files cleared.');
   });
 
   ;['dragenter','dragover'].forEach(ev=>{
@@ -488,6 +568,7 @@ function updateRunEnabled(){
 (function bindPreviewControls(){
   const refresh = el('preview-refresh');
   const pageInp = el('preview-page');
+  const overlay = el('overlay-canvas');
 
   function doPreview(){
     const pdf = state.files.find(f=>f.type==='application/pdf');
@@ -497,6 +578,46 @@ function updateRunEnabled(){
 
   refresh.addEventListener('click', doPreview);
   pageInp.addEventListener('change', doPreview);
+
+  let dragging = false;
+  let dx = 0;
+  let dy = 0;
+
+  function updateFromPointer(clientX, clientY){
+    if(!state.signOverlayActive) return;
+    const m = getSignOverlayMetrics();
+    if(!m) return;
+    const rect = overlay.getBoundingClientRect();
+    const localX = Math.max(0, Math.min(m.canvasW, clientX - rect.left));
+    const localY = Math.max(0, Math.min(m.canvasH, clientY - rect.top));
+    const xPx = Math.max(0, Math.min(m.canvasW - m.wPx, localX - dx));
+    const yPx = Math.max(0, Math.min(m.canvasH - m.hPx, localY - dy));
+
+    const xPt = Math.round(xPx * (state.preview.pdfWidth / m.canvasW));
+    const yTopPt = Math.round(yPx * (state.preview.pdfHeight / m.canvasH));
+
+    if(el('sg-x')) el('sg-x').value = String(xPt);
+    if(el('sg-y')) el('sg-y').value = String(yTopPt);
+    drawSignOverlay();
+  }
+
+  overlay.addEventListener('mousedown', e=>{
+    if(!state.signOverlayActive) return;
+    const m = getSignOverlayMetrics();
+    if(!m) return;
+    const rect = overlay.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+    const inside = px>=m.xPx && px<=m.xPx+m.wPx && py>=m.yPx && py<=m.yPx+m.hPx;
+    if(!inside) return;
+    dragging = true;
+    dx = px - m.xPx;
+    dy = py - m.yPx;
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', e=>{ if(dragging) updateFromPointer(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', ()=>{ dragging = false; });
 })();
 
 // ---------- Run / Reset ----------
@@ -509,6 +630,8 @@ function updateRunEnabled(){
     try{
       toast('Processing…');
       await state.tool.run();
+      const runBtn = el('run');
+      if(runBtn) runBtn.textContent = state.runLabel || 'Process';
       toast('Done.');
     }catch(e){
       toast('Error: ' + (e?.message||e));
@@ -684,10 +807,12 @@ function simpleToolReorder(){
       const src = await lib.PDFDocument.load(await loadPdfBytes(file));
       const max = src.getPageCount();
 
-      const seq = String(el('ro-order').value||'')
+      const raw = String(el('ro-order').value||'');
+      const seq = raw
         .split(',')
         .map(s=>parseInt(s.trim(),10))
         .filter(n=>Number.isFinite(n));
+      if(seq.length !== raw.split(',').filter(Boolean).length) throw new Error('Order contains non-numeric values.');
 
       if(seq.length !== max) throw new Error(`Order must include exactly ${max} pages.`);
       const set = new Set(seq);
@@ -1281,10 +1406,12 @@ function simpleToolSign(){
         }
       });
 
+      state.signOverlayActive = true;
       ['sg-pages','sg-w','sg-h','sg-x','sg-y','sg-maxscale','sg-out'].forEach(id=>{
-        el(id).addEventListener('input', updateRunEnabled);
-        el(id).addEventListener('change', updateRunEnabled);
+        el(id).addEventListener('input', ()=>{ updateRunEnabled(); drawSignOverlay(); });
+        el(id).addEventListener('change', ()=>{ updateRunEnabled(); drawSignOverlay(); });
       });
+      drawSignOverlay();
     },
     validate(){
       const pdfs = state.files.filter(f=>f.type==='application/pdf');
@@ -1306,8 +1433,11 @@ function simpleToolSign(){
       const outMode = String(el('sg-out').value||'zip');
 
       const outputs = [];
+      const runBtn = el('run');
 
-      for(const file of pdfs){
+      for(let idx=0; idx<pdfs.length; idx++) {
+        const file = pdfs[idx];
+        if(runBtn){ runBtn.textContent = `Processing ${idx+1} of ${pdfs.length}…`; }
         const bytes = await loadPdfBytes(file);
         const doc = await lib.PDFDocument.load(bytes);
 
@@ -1444,7 +1574,7 @@ function simpleToolPIIScan(){
         </div>
 
         <button id="pii-copy" class="btn btn-sm" type="button" style="margin-top:10px;">Copy results to clipboard</button>
-        <div class="mini" style="margin-top:10px;">Results will appear in the Output panel.</div>
+        <div id="pii-results" class="mini" style="margin-top:10px;">Results will appear in the Output panel.</div>
       `;
 
       el('pii-pages').addEventListener('input', updateRunEnabled);
@@ -1497,6 +1627,49 @@ function simpleToolPIIScan(){
         if(digits.length<13 || digits.length>19) return false;
         return luhn(digits);
       }).map(x=>x.replace(/\s+/g,' ').trim());
+
+      const findings = [];
+      for(let p=1;p<=maxPages;p++){
+        const page = await pdf.getPage(p);
+        const tc = await page.getTextContent();
+        for(const item of tc.items || []){
+          const str = String(item.str || '');
+          if(!str) continue;
+          const hit = emails.find(v=>str.includes(v)) || ssns.find(v=>str.includes(v)) || cards.find(v=>str.includes(v));
+          if(!hit) continue;
+          const t = item.transform || [1,0,0,1,0,0];
+          findings.push({ page:p, text:hit, x:t[4]||0, y:t[5]||0, w:item.width||Math.max(40, hit.length*4), h:item.height||12 });
+        }
+      }
+
+      const resultsHost = el('pii-results');
+      if(resultsHost){
+        resultsHost.innerHTML = '';
+        if(!findings.length){
+          resultsHost.textContent = 'No directly mappable findings for one-click redaction.';
+        }else{
+          const top = findings.slice(0, 25);
+          top.forEach((f, i)=>{
+            const row = document.createElement('div');
+            row.style.marginTop = '6px';
+            const btnId = `pii-redact-${i}`;
+            row.innerHTML = `<button id="${btnId}" class="btn btn-sm" type="button">Redact This</button> <span>Page ${f.page}: ${escapeHtml(f.text)}</span>`;
+            resultsHost.appendChild(row);
+            const btn = document.getElementById(btnId);
+            if(btn){
+              btn.addEventListener('click', async ()=>{
+                const lib = getPDFLib();
+                const doc = await lib.PDFDocument.load(await loadPdfBytes(file));
+                const pg = doc.getPage(f.page-1);
+                pg.drawRectangle({ x:f.x, y:f.y-2, width:Math.max(8,f.w), height:Math.max(8,f.h+4), color:lib.rgb(0,0,0), opacity:1 });
+                const outBytes = await doc.save();
+                const name = file.name.replace(/\.pdf$/i,'') + `-redacted-${i+1}.pdf`;
+                await downloadOutput([{name, bytes:outBytes}]);
+              });
+            }
+          });
+        }
+      }
 
       const report = { scannedPages:maxPages, emails, phones, ssns, cards };
 
