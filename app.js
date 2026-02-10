@@ -20,20 +20,11 @@ let signDragActive = false;
 let signDragOffsetX = 0;
 let signDragOffsetY = 0;
 
-function detectPdfjsVersionFromScripts(){
-  const script = document.querySelector('script[src*="pdfjs-dist"][src*="/build/pdf.min.js"]');
-  if(!script) return '';
-  const src = String(script.getAttribute('src') || '');
-  const m = src.match(/pdfjs-dist@([^/]+)\/build\/pdf\.min\.js/);
-  return m?.[1] || '';
-}
-
 function ensurePdfjsWorker(){
   const pdfjsLib = getPDFJS();
   try{
     if(!pdfjsLib.GlobalWorkerOptions.workerSrc){
-      const version = detectPdfjsVersionFromScripts() || '3.11.174';
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.min.js`;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.min.js';
     }
   }catch(_){}
   return pdfjsLib;
@@ -42,6 +33,52 @@ function ensurePdfjsWorker(){
 function toast(msg){
   const out = el('output');
   out.textContent = String(msg || '');
+}
+
+
+function bindDiagnostics(){
+  const openBtn = el('open-diagnostics');
+  const closeBtn = el('close-diagnostics');
+  const modal = el('diagnostics-modal');
+  const out = el('diagnostics-output');
+  const refresh = ()=>{
+    if(!out) return;
+    const deps = {
+      PDFLib: !!window.PDFLib,
+      pdfjsLib: !!window.pdfjsLib,
+      JSZip: !!window.JSZip,
+      html2pdf: !!window.html2pdf
+    };
+    out.textContent = [
+      `online: ${navigator.onLine}`,
+      `pdfjs workerSrc: ${window.pdfjsLib?.GlobalWorkerOptions?.workerSrc || '(unset)'}`,
+      `deps: ${JSON.stringify(deps)}`,
+      `files loaded: ${state.files.length}`,
+      `active tool: ${state.toolId || '(none)'}`,
+      `run in progress: ${state.runInProgress}`
+    ].join('\n');
+  };
+
+  if(openBtn){
+    openBtn.addEventListener('click', ()=>{
+      refresh();
+      if(modal) modal.hidden = false;
+    });
+  }
+  if(closeBtn){
+    closeBtn.addEventListener('click', ()=>{ if(modal) modal.hidden = true; });
+  }
+}
+
+function bindNetworkAttemptLogger(){
+  if(!location.hash.includes('dev-network-log=1')) return;
+  const nativeFetch = window.fetch?.bind(window);
+  if(nativeFetch){
+    window.fetch = (...args)=>{
+      console.warn('Network call attempted:', args[0]);
+      return nativeFetch(...args);
+    };
+  }
 }
 
 function showFatalError(msg){
@@ -88,7 +125,7 @@ function saveCompact(v){
 async function readPDFjs(file){
   const pdfjsLib = ensurePdfjsWorker();
   const buf = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: buf });
+  const loadingTask = pdfjsLib.getDocument({ data: buf, disableWorker: true });
   return await loadingTask.promise;
 }
 
@@ -102,7 +139,7 @@ async function renderPreview(file, pageNum){
       activePreviewRenderTask.cancel();
       activePreviewRenderTask = null;
     }
-    if(!file) { state.preview = { pdfWidth:0, pdfHeight:0, canvasWidth:canvas.width||0, canvasHeight:canvas.height||0 }; note.textContent='Upload a PDF to preview.'; drawSignOverlay(); return; }
+    if(!file) { clearPreviewCanvas(); note.textContent='Upload a PDF to preview.'; drawSignOverlay(); return; }
     if(file.type !== 'application/pdf') { note.textContent='Preview supports PDFs only.'; return; }
 
     const pdf = await readPDFjs(file);
@@ -110,6 +147,7 @@ async function renderPreview(file, pageNum){
     const page = await pdf.getPage(pn);
     const viewport = page.getViewport({ scale: 1.25 });
 
+    ctx.clearRect(0, 0, canvas.width || 0, canvas.height || 0);
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
     state.preview = {
@@ -130,6 +168,25 @@ async function renderPreview(file, pageNum){
   }
 }
 
+
+
+function clearPreviewCanvas(){
+  const canvas = el('preview-canvas');
+  const overlay = el('overlay-canvas');
+  const ctx = canvas?.getContext('2d');
+  const octx = overlay?.getContext('2d');
+  if(canvas && ctx){
+    ctx.clearRect(0, 0, canvas.width || 0, canvas.height || 0);
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+  if(overlay && octx){
+    octx.clearRect(0, 0, overlay.width || 0, overlay.height || 0);
+    overlay.width = 0;
+    overlay.height = 0;
+  }
+  state.preview = { pdfWidth:0, pdfHeight:0, canvasWidth:0, canvasHeight:0 };
+}
 
 function getSignOverlayMetrics(){
   const base = state.preview || { pdfWidth:0, pdfHeight:0, canvasWidth:0, canvasHeight:0 };
@@ -294,6 +351,9 @@ const state = {
   runLabel: 'Process',
   preview: { pdfWidth:0, pdfHeight:0, canvasWidth:0, canvasHeight:0 },
   signOverlayActive: false,
+  runToken: 0,
+  runInProgress: false,
+  sidebarBtnCache: new Map(),
 };
 
 function assignToolIcons(){
@@ -389,6 +449,59 @@ function bindSidebarControls(){
   apply();
 }
 
+function getCachedToolBtn(t){
+  const id = String(t.id);
+  let btn = state.sidebarBtnCache.get(id);
+  const hue = hashHue(t.category||t.id);
+  const pill = escapeHtml(t.accept==='pdf'?'PDF':t.accept==='images'?'Images':'Mixed');
+  const isFav = state.favorites && state.favorites.has(t.id);
+
+  if(!btn){
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tool-btn';
+    btn.dataset.tool = t.id;
+    btn.setAttribute('data-tool-item','1');
+    btn.setAttribute('data-tool-hay', `${t.name} ${t.category||''} ${t.desc||''}`);
+    btn.title = t.name;
+
+    btn.addEventListener('click', (e)=>{
+      if(e.target && (/** @type {HTMLElement} */(e.target)).classList.contains('pin-btn')) return;
+      setTool(t.id);
+    });
+
+    state.sidebarBtnCache.set(id, btn);
+  }
+
+  btn.style.setProperty('--catHue', String(hue));
+  btn.innerHTML = `
+    <span class="tool-left">
+      <span class="tool-ic">${escapeHtml(t.icon||'📄')}</span>
+      <span class="tool-txt">${escapeHtml(t.name)}</span>
+    </span>
+    <span class="tool-right">
+      <button class="pin-btn" type="button" title="${isFav?'Unfavorite':'Favorite'}" aria-label="${isFav?'Unfavorite':'Favorite'}">${isFav?'⭐':'☆'}</button>
+      <span class="pill">${pill}</span>
+    </span>
+  `;
+
+  const pin = btn.querySelector('.pin-btn');
+  if(pin){
+    pin.addEventListener('click', (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      if(!state.favorites) state.favorites = new Set();
+      if(state.favorites.has(t.id)) state.favorites.delete(t.id);
+      else state.favorites.add(t.id);
+      saveFavs(state.favorites);
+      buildSidebar();
+    }, { once:true });
+  }
+
+  btn.classList.toggle('active', btn.dataset.tool === state.toolId);
+  return btn;
+}
+
 function buildSidebar(){
   const host = el('tool-list');
   host.innerHTML = '';
@@ -402,56 +515,12 @@ function buildSidebar(){
     host.appendChild(h);
   };
 
-  const renderToolBtn = (t)=>{
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'tool-btn';
-    btn.dataset.tool = t.id;
-    btn.setAttribute('data-tool-item','1');
-    btn.setAttribute('data-tool-hay', `${t.name} ${t.category||''} ${t.desc||''}`);
-    btn.title = t.name;
-
-    const hue = hashHue(t.category||t.id);
-    btn.style.setProperty('--catHue', String(hue));
-
-    const pill = escapeHtml(t.accept==='pdf'?'PDF':t.accept==='images'?'Images':'Mixed');
-    const isFav = state.favorites && state.favorites.has(t.id);
-
-    btn.innerHTML = `
-      <span class="tool-left">
-        <span class="tool-ic">${escapeHtml(t.icon||'📄')}</span>
-        <span class="tool-txt">${escapeHtml(t.name)}</span>
-      </span>
-      <span class="tool-right">
-        <button class="pin-btn" type="button" title="${isFav?'Unfavorite':'Favorite'}" aria-label="${isFav?'Unfavorite':'Favorite'}">${isFav?'⭐':'☆'}</button>
-        <span class="pill">${pill}</span>
-      </span>
-    `;
-
-    btn.addEventListener('click', (e)=>{
-      if(e.target && (/** @type {HTMLElement} */(e.target)).classList.contains('pin-btn')) return;
-      setTool(t.id);
-    });
-
-    const pin = btn.querySelector('.pin-btn');
-    pin.addEventListener('click', (e)=>{
-      e.preventDefault(); e.stopPropagation();
-      if(!state.favorites) state.favorites = new Set();
-      if(state.favorites.has(t.id)) state.favorites.delete(t.id);
-      else state.favorites.add(t.id);
-      saveFavs(state.favorites);
-      buildSidebar();
-    });
-
-    return btn;
-  };
-
   const byName = [...tools].sort((a,b)=>String(a.name).localeCompare(String(b.name)));
 
   const favs = byName.filter(t=>state.favorites && state.favorites.has(t.id));
   if(favs.length){
     makeSection('⭐ Favorites');
-    favs.forEach(t=>host.appendChild(renderToolBtn(t)));
+    favs.forEach(t=>host.appendChild(getCachedToolBtn(t)));
   }
 
   const groups = new Map();
@@ -465,14 +534,10 @@ function buildSidebar(){
     const rest = list.filter(t=>!(state.favorites && state.favorites.has(t.id)));
     if(!rest.length) continue;
     makeSection(cat);
-    rest.forEach(t=>host.appendChild(renderToolBtn(t)));
+    rest.forEach(t=>host.appendChild(getCachedToolBtn(t)));
   }
-
-  const active = state.toolId;
-  host.querySelectorAll('button.tool-btn').forEach(b=>{
-    b.classList.toggle('active', b.dataset.tool === active);
-  });
 }
+
 
 function bindToolSearch(){
   const inp = el('tool-search');
@@ -618,7 +683,7 @@ function updateRunEnabled(){
   }
   if(!state.tool){ runBtn.disabled = true; return; }
   const msg = state.tool.validate ? state.tool.validate() : '';
-  runBtn.disabled = !!msg;
+  runBtn.disabled = !!msg || !!state.runInProgress;
   if(msg) toast(msg);
   else toast('');
 }
@@ -656,10 +721,10 @@ function updateRunEnabled(){
 
   clearBtn.addEventListener('click', ()=>{
     state.files = [];
+    state.runToken += 1;
+    clearPreviewCanvas();
     updateFileList();
     updateRunEnabled();
-    el('preview-canvas').getContext('2d').clearRect(0,0,9999,9999);
-    el('overlay-canvas')?.getContext('2d')?.clearRect(0,0,9999,9999);
     el('preview-note').textContent = 'Files cleared.';
     toast('Files cleared.');
     if(state.tool && typeof state.tool.loadThumbnails === 'function'){
@@ -707,15 +772,25 @@ function updateRunEnabled(){
   const resetBtn = el('reset-tool');
 
   runBtn.addEventListener('click', async ()=>{
-    if(!state.tool) return;
+    if(!state.tool || state.runInProgress) return;
+    const token = ++state.runToken;
+    state.runInProgress = true;
+    updateRunEnabled();
     try{
       toast('Processing…');
       await state.tool.run();
+      if(token !== state.runToken) return;
       const runBtn = el('run');
       if(runBtn) runBtn.textContent = state.runLabel || 'Process';
       toast('Done.');
     }catch(e){
+      if(token !== state.runToken) return;
       toast('Error: ' + (e?.message||e));
+    }finally{
+      if(token === state.runToken){
+        state.runInProgress = false;
+      }
+      updateRunEnabled();
     }
   });
 
@@ -751,6 +826,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
     buildSidebar();
     bindSidebarControls();
     bindToolSearch();
+    bindDiagnostics();
+    bindNetworkAttemptLogger();
 
     if(state.compact){
       document.body.classList.add('compact');
@@ -1178,10 +1255,10 @@ function simpleToolOddEven(){
 function simpleToolRemoveBlank(){
   return {
     id:'removeblank', name:'Remove Blank Pages', category:'Cleanup', accept:'pdf',
-    desc:'Removes pages that appear blank (by scanning for visible text).',
-    how:'Uses PDF.js to detect visible text on each page; pages with no text are removed.',
-    mistakes:'If your “blank” pages contain only images, they may be kept (because they are not blank).',
-    tips:'If you need true pixel blank detection, we can add image-render scanning later (slower).',
+    desc:'Removes pages that appear blank by scanning text, with optional image-based blank detection.',
+    how:'Uses PDF.js text extraction and (optionally) pixel scanning to detect truly blank pages before rebuilding the PDF.',
+    mistakes:'Image-based blank detection is slower on large files. Keep max pages capped when testing.',
+    tips:'Start with text-only mode for speed, then enable image detection if scanned blanks are being missed.',
     buildOptions(root){
       root.innerHTML = `
         <div class="row2">
@@ -1194,6 +1271,13 @@ function simpleToolRemoveBlank(){
             <label>Max pages to scan (0 = all)</label>
             <input id="rb-maxpages" type="number" min="0" value="0">
             <div class="mini">For huge PDFs, cap scanning for speed. Pages after the cap are preserved as-is.</div>
+          </div>
+          <div class="opt">
+            <label style="display:flex; gap:8px; align-items:center; margin:24px 0 0;">
+              <input id="rb-scan-images" type="checkbox">
+              Also remove image-only blank pages (slower)
+            </label>
+            <div class="mini">Renders each page to inspect near-white pixels. Best for scanned PDFs.</div>
           </div>
         </div>
       `;
@@ -1216,11 +1300,32 @@ function simpleToolRemoveBlank(){
       const maxPages = maxCap ? Math.min(pdf.numPages, maxCap) : pdf.numPages;
 
       const keep = [];
+      const scanImages = !!el('rb-scan-images')?.checked;
       for(let p=1;p<=maxPages;p++){
         const page = await pdf.getPage(p);
         const tc = await page.getTextContent();
         const text = tc.items.map(it=>it.str).join('');
-        if(text.length >= minChars) keep.push(p-1);
+        let nonBlank = text.length >= minChars;
+
+        if(!nonBlank && scanImages){
+          const viewport = page.getViewport({ scale: 0.35 });
+          const probe = document.createElement('canvas');
+          probe.width = Math.max(1, Math.floor(viewport.width));
+          probe.height = Math.max(1, Math.floor(viewport.height));
+          const pctx = probe.getContext('2d', { willReadFrequently: true });
+          await page.render({ canvasContext: pctx, viewport }).promise;
+          const data = pctx.getImageData(0, 0, probe.width, probe.height).data;
+          for(let i=0;i<data.length;i+=4){
+            const alpha = data[i+3];
+            const luma = (data[i]*0.2126) + (data[i+1]*0.7152) + (data[i+2]*0.0722);
+            if(alpha > 12 && luma < 248){
+              nonBlank = true;
+              break;
+            }
+          }
+        }
+
+        if(nonBlank) keep.push(p-1);
       }
 
       // If capped, keep all remaining pages by default
@@ -2626,7 +2731,8 @@ function simpleToolPDFToPNG(){
 
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
-      canvas.width = Math.floor(viewport.width);
+      ctx.clearRect(0, 0, canvas.width || 0, canvas.height || 0);
+    canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
 
       const task = page.render({ canvasContext: ctx, viewport });
