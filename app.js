@@ -739,8 +739,12 @@ function simpleToolMerge(){
     tips:'If you have many large PDFs, merge in smaller batches first.',
     buildOptions(root){
       root.innerHTML = `
-        <div class="mini">Merges all uploaded PDFs in the order shown in the file list.</div>
+        <div class="mini">Merges all uploaded PDFs in the order shown in the file list (or alphabetically, if selected).</div>
+        <div class="opt checkline">
+          <label><input id="merge-alpha" type="checkbox" /> Merge files in alphabetical order</label>
+        </div>
       `;
+      el('merge-alpha')?.addEventListener('change', updateRunEnabled);
     },
     validate(){
       const pdfs = state.files.filter(f=>f.type==='application/pdf');
@@ -750,9 +754,13 @@ function simpleToolMerge(){
     async run(){
       const lib = getPDFLib();
       const pdfs = state.files.filter(f=>f.type==='application/pdf');
+      const mergeAlphabetically = !!el('merge-alpha')?.checked;
+      const filesToMerge = mergeAlphabetically
+        ? [...pdfs].sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''), undefined, { numeric:true, sensitivity:'base' }))
+        : pdfs;
       const out = await lib.PDFDocument.create();
 
-      for(const f of pdfs){
+      for(const f of filesToMerge){
         const src = await lib.PDFDocument.load(await loadPdfBytes(f));
         const copied = await out.copyPages(src, src.getPageIndices());
         copied.forEach(p=>out.addPage(p));
