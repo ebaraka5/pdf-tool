@@ -1509,7 +1509,7 @@ function simpleToolWatermark(){
         const x = width/2 - (font.widthOfTextAtSize(text, size)/2);
         const y = height/2 + yoff;
 
-        const rotate = mode==='diagonal' ? lib.degrees(35) : lib.degrees(0);
+        const rotate = mode==='diagonal' ? lib.degrees(-35) : lib.degrees(0);
 
         p.drawText(text, {
           x, y,
